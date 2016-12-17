@@ -1,0 +1,130 @@
+---
+title: "Prediction Project - Practical Machine Learning"
+output: github_document
+keep_md: yes
+---
+### Predicting Weight Lifting Exercise Performance
+##### by Bryan Sirtosky
+
+#### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit, it is now possible to collect a large amount of data about personal activity relatively inexpensively. These types of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this data set, the participants were asked to perform barbell lifts correctly and incorrectly in five different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which participants did the exercise.  The dependent variable or response is the “classe” variable in the training set.
+
+#### Exploratory Data Analysis
+Our first step is to load libraries we will need: the caret library for modeling and the knitr library for producing readable output.
+```{r setoptions, echo=TRUE}
+    library(knitr)
+    library(caret)
+    opts_chunk$set(echo=TRUE)
+```
+Next, we will download the training and testing data.
+```{r getdata, echo=TRUE}
+    if (!file.exists("pml-training.csv")) {
+        download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                      destfile = "pml-training.csv")
+    }
+    if (!file.exists("pml-testing.csv")) {
+        download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                      destfile = "pml-testing.csv")
+    }
+
+    #load testing data
+    test <- read.csv("pml-testing.csv", na.strings = c("", "NULL", "NA"))
+    #head(test)
+    #dim(test)
+    
+    #load training data
+    train <- read.csv("pml-training.csv", na.strings = c("", "NULL", "NA"))
+    #head(train)
+    dim(train)
+```
+The train data contains `r I(dim(train)[1])` observations and `r I(dim(train)[2])` variables.
+
+Our next step is to clean the data and remove any unnecessary columns and redundant predictors as we want to make the training dataset as small as possible without losing any of the dataset's original variation and detail.
+
+```{r cleandata, echo=TRUE}
+    #remove null columns
+    train.rem.nulls <- train[, colSums(is.na(train)) == 0]
+    #head(train.rem.nulls)
+    
+    #remove unneeded columns
+    remCols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+    train.rem.unneeded.cols <- train.rem.nulls[, -which(names(train.rem.nulls) %in% remCols)]
+    #head(train.rem.unneeded.cols)
+    
+    #check for near zero covariates
+    #nzv <- nearZeroVar(train.rem.unneeded.cols, saveMetrics=TRUE)
+    #nzv
+    
+    #remove highly correlated numeric variables
+    corMatrix <- cor(na.omit(train.rem.unneeded.cols[sapply(train.rem.unneeded.cols, is.numeric)]))
+    remCorCols = findCorrelation(corMatrix, cutoff = .90, verbose = FALSE, names = FALSE)
+    train.cleaned <- train.rem.unneeded.cols[,-remCorCols]
+    dim(train.cleaned)
+```
+After removing null, unneeded, and highly correlated columns, we have `r I(dim(train.cleaned)[2])` variables remaining.
+
+Once the training dataset is as tidy as we can get it, we will divide the training dataset into two parts:  70% to a dataset to train our model and the remaining 30% to cross validate our model.
+```{r partitiondata, echo=TRUE}
+    #split train into train/validation
+    inTrain = createDataPartition(y = train.cleaned$classe, p = 0.7, list = FALSE)
+    train.cleaned.train = train.cleaned[inTrain, ]
+    train.cleaned.valid = train.cleaned[-inTrain, ]
+    dim(train.cleaned.train)
+    dim(train.cleaned.valid)
+```
+Our train dataset contains `r I(dim(train.cleaned.train)[1])` observations, and our valid dataset contains `r I(dim(train.cleaned.valid)[1])` observations.
+
+#### Prediction Model
+Since we have `r I(dim(train.cleaned)[2])` potential predictor variables and a response variable that is a factor (A, B, C, D, E), we have chosen to use the Random Forest algorithm to generate our prediction model.  The Random Forest algorithm can be used for classification and regression applications and will generate a forest of classification-type decision trees based on random subsets of the prediction variables, so it is a good choice for our dataset.  We will set a random seed for reproducible results.
+```{r predictionmodel, echo=TRUE}
+    #generate model using RandomForest
+    library(randomForest)
+    set.seed(123)
+    rf.train <- randomForest(classe ~ ., data = train.cleaned.train, ntree = 500, importance = TRUE)
+    rf.train
+```
+The confusion matrix created by the model reveals that our model was very accurate in predicting the correct class for each observation.
+```{r plotnmodel, echo=TRUE}
+    plot(rf.train)
+```
+
+By plotting the model, we can see that the rate of error diminishes to nearly zero as we approach the creation of 100 classification-type decision trees.
+```{r variableimportance, echo=TRUE}
+    #check variable importance
+    varImpPlot(rf.train,
+               sort = TRUE,
+               main="Variable Importance",
+               n.var=10)
+```
+
+From the Variable Importance (varImpPlot) graph, we can see that the yaw_belt, magnet_dumbbell_z, pitch_belt, pitch_forearm, and magnet_dumbbell_y were the top five predictors of how an individual performed the exercises.
+
+#### Cross Validation and Out-of-Sample Error
+The Random Forest model yielded an Out-of-Bag (OOB) estimated error rate of approximately 0.6% against the training partition of the train data.  The Out-of-Sample (OOS) accuracy will be generated by applying the model to the validation portion of the train data.  We expect a similar OOS error to the OOB error.
+```{r crossvalidation, echo=TRUE}
+    library(e1071)
+    
+    cv.prediction = predict(rf.train, train.cleaned.valid)
+    cv.confusion.matrix <- confusionMatrix(train.cleaned.valid$classe, cv.prediction)
+    cv.confusion.matrix
+```
+The model achieved approximately 99% accuracy rate against the validation portion of the training data, so our model has proven to be very accurate against similar training data.
+
+#### Predict Results on Test Data
+We will now apply our model to the test data and check our results.
+```{r predictionagainsttestdata, echo=TRUE}
+    test.results <- predict(rf.train, test)
+    test.results
+```
+
+
+#### References
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4SmLz8zrG
+
+
