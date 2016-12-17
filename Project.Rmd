@@ -1,6 +1,6 @@
 ---
 title: "Prediction Project - Practical Machine Learning"
-output: github_document
+output: html_document
 keep_md: yes
 ---
 ### Predicting Weight Lifting Exercise Performance
